@@ -15,5 +15,5 @@ learning, scientific computing, and astrophysics. A number of social events are 
 to foster team building and networking. The program will conclude with the 
 showcasing of projects, including an award presentation for the most outstanding works.
 
-<img src="https://raw.githubusercontent.com/ParsecInstitute/Astromatic2022/main/.github/images/poster.jpg" alt="" style="height: 1000px; width:1000px;"/>
+<img src="https://raw.githubusercontent.com/ParsecInstitute/Astromatic2022/main/.github/images/poster.jpg" alt="" style="height: 800px; width:600px;"/>
 
