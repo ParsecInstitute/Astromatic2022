@@ -2,44 +2,55 @@ import os
 from glob import glob
 import numpy as np
 from numpy.random import uniform as unif
-import matplotlib.pyplot as plt
-from matplotlib import gridspec
 from lenstronomy.LensModel.lens_model import LensModel
 from lenstronomy.LightModel.light_model import LightModel
-from astropy.cosmology import Planck18 as cosmo
 from astropy.convolution import convolve, Gaussian2DKernel
-from astromatic.lens_inference.utils.lensing_utils import theta_E_from_M, sp_ray_tracing, lens_source
-from astromatic.lens_inference.utils.display_utils import display_diff
-import scipy.interpolate as sp_interp
+from lensing_utils import theta_E_from_M, sp_ray_tracing, lens_source
 import h5py
-from tqdm import tqdm
+import time
+
+# total number of slurm workers detected
+# defaults to 1 if not running under SLURM
+N_WORKERS = int(os.getenv('SLURM_ARRAY_TASK_COUNT', 1))
+
+# this worker's array index. Assumes slurm array job is zero-indexed
+# defaults to zero if not running under SLURM
+THIS_WORKER = int(os.getenv('SLURM_ARRAY_TASK_ID', 0)) ## it starts from 1!!
 
 
 class GalaxyLenser():
 	"""
 	Class for the lensing of a single Sersic source galaxy by an SIE + SHEAR of parameters randomly sampled parameters
 	"""
-	def __init__(self, shear=True, noise="poisson", psf="gaussian", mass_function="beta", mass_function_kw={"a": 5, "b": 2.5}, include_lens_light=False):
+	def __init__(self, zl, zs, beta1, beta2, theta1, theta2, npix, shear_bool=True, lens_light_bool=False, noise="poisson", psf="gaussian", mass_function="beta", mass_function_kw={"a": 6.5, "b": 2.}):
 
-		self.shear = shear
+		self.zl = zl
+		self.zs = zs
+		self.beta1, self.beta2 = beta1, beta2
+		self.theta1, self.theta2 = theta1, theta2
+		self.npix = npix
+		self.add_shear = shear_bool
 		self.noise = noise
 		self.psf = psf
 		self.mass_function = mass_function
 		self.mass_function_kw = mass_function_kw
-		self.include_lens_light = include_lens_light
+		self.add_lens_light = lens_light_bool
 
 		self.sample_mass()
 		self.lens_paramsampler()
 		self.source_paramsampler()
-		if self.include_lens_light:
+		if self.add_lens_light:
 			self.lens_light_paramsampler()
 
 		self.format_params()
+
 
 	def sample_mass(self, log_mlow=10.7, log_mhigh=12.):
 
 		if self.mass_function == "beta":
 			sample = np.random.beta(**self.mass_function_kw)
+		else:
+			raise ValueError(f"mass function {self.mass_function} not implemented")
 
 		self.log_lens_mass = GalaxyLenser._min_max_scale(sample, log_mlow, log_mhigh)
 		self.lens_mass = 10 ** self.log_lens_mass
@@ -50,24 +61,24 @@ class GalaxyLenser():
 			self.sample_mass()
 
 		# SIE (+ SHEAR) lens
-		SIE_kwargs = {"theta_E": theta_E_from_M(self.lens_mass, ZL, ZS),
+		SIE_kwargs = {"theta_E": theta_E_from_M(self.lens_mass, self.zl, self.zs),
 					  "e1": unif(low=SIE_pb["e1"][0], high=SIE_pb["e1"][1]),
 					  "e2": unif(low=SIE_pb["e2"][0], high=SIE_pb["e2"][1]),
 					  "center_x": unif(low=SIE_pb["center_x"][0], high=SIE_pb["center_x"][1]),
 					  "center_y": unif(low=SIE_pb["center_y"][0], high=SIE_pb["center_y"][1])}
 
 		self.lens_kwargs = [SIE_kwargs]
-		self.lens_redshift_list = [ZL]
+		self.lens_redshift_list = [self.zl]
 		self.lens_model_list = ["SIE"]
 
-		if self.shear:
+		if self.add_shear:
 			SHEAR_kwargs = {"gamma1": unif(low=SHEAR_pb["gamma1"][0], high=SHEAR_pb["gamma1"][1]),
 							"gamma2": unif(low=SHEAR_pb["gamma2"][0], high=SHEAR_pb["gamma2"][1]),
 							"ra_0": unif(low=SHEAR_pb["ra_0"][0], high=SHEAR_pb["ra_0"][1]),
 							"dec_0": unif(low=SHEAR_pb["dec_0"][0], high=SHEAR_pb["dec_0"][1])}
 
 			self.lens_kwargs.append(SHEAR_kwargs)
-			self.lens_redshift_list.append(ZL)
+			self.lens_redshift_list.append(self.zl)
 			self.lens_model_list.append("SHEAR")
 
 
@@ -82,7 +93,7 @@ class GalaxyLenser():
 						 "center_y": unif(low=SERSIC_E_pb["center_y"][0], high=SERSIC_E_pb["center_y"][1])}
 
 		self.source_kwargs = [SERSIC_E_kwargs]
-		self.source_redshift = ZS
+		self.source_redshift = self.zs
 		self.source_model_list = ["SERSIC_ELLIPSE"]
 
 
@@ -100,27 +111,28 @@ class GalaxyLenser():
 						 "center_y": self.lens_kwargs[0]["center_y"] + unif(-d_center_lim, d_center_lim)}
 
 		self.lens_light_kwargs = [SERSIC_E_kwargs]
-		self.lens_light_redshift = ZL
+		self.lens_light_redshift = self.zl
 		self.lens_light_model_list = ["SERSIC_ELLIPSE"]
 
 
 	def produce_lens(self):
 		# Source light
 		self.source_light_model = LightModel(self.source_model_list)
-		self.source_light = self.source_light_model.surface_brightness(BETA1, BETA2, self.source_kwargs)
+		self.source_light = self.source_light_model.surface_brightness(self.beta1, self.beta2, self.source_kwargs)
 
 		# Raytracing and lensing
 		self.lens_model = LensModel(lens_model_list=self.lens_model_list,
-									z_source=ZS,
+									z_source=self.zs,
 									lens_redshift_list=self.lens_redshift_list)
 
-		self.beta1_def, self.beta2_def = self.lens_model.ray_shooting(THETA1, THETA2, self.lens_kwargs)
-		self.lensed_src = lens_source(THETA1, THETA2, self.beta1_def, self.beta2_def, self.source_light, NPIX)
+		self.beta1_def, self.beta2_def = self.lens_model.ray_shooting(self.theta1, self.theta2, self.lens_kwargs)
+		self.lensed_src = lens_source(self.theta1, self.theta2, self.beta1_def, self.beta2_def, self.source_light, self.npix)
 
-		if self.include_lens_light:
+
+		if self.add_lens_light:
 			# Lens light
 			self.lens_light_model = LightModel(self.lens_light_model_list)
-			self.lens_light = self.lens_light_model.surface_brightness(THETA1, THETA2, self.lens_light_kwargs)
+			self.lens_light = self.lens_light_model.surface_brightness(self.theta1, self.theta2, self.lens_light_kwargs)
 
 			self.lensed_image = self.lensed_src + self.lens_light
 		else:
@@ -133,12 +145,16 @@ class GalaxyLenser():
 		if self.psf is not None:
 			if self.psf == "gaussian":
 				kernel = Gaussian2DKernel(x_stddev=2)
+			else:
+				raise ValueError(f"psf of type '{self.psf}' not implemented")
 			image = convolve(image, kernel)
 
 		# Noise
 		if self.noise is not None:
 			if self.noise == "poisson":
 				mask = np.random.poisson(image)
+			else:
+				raise ValueError(f"noise of type '{self.noise}' not implemented")
 			image += mask
 
 		return image
@@ -148,15 +164,17 @@ class GalaxyLenser():
 		self.lens_param_values = list(self.lens_kwargs[0].values())
 		self.lens_param_keys = list(self.lens_kwargs[0].keys())
 
-		if self.shear:
-			self.lens_param_values += list(self.lens_kwargs[1].values())
-			self.lens_param_keys += list(self.lens_kwargs[1].keys())
+		if self.add_shear:
+			# don't save SHEAR's 'ra_0' and 'dec_0' params, since always 0
+			self.lens_param_values += list(self.lens_kwargs[1].values())[:-2]
+			self.lens_param_keys += list(self.lens_kwargs[1].keys())[:-2]
 
 		self.source_param_values = list(self.source_kwargs[0].values())
 		self.source_param_keys = list(self.source_kwargs[0].keys())
 
-		self.lens_light_param_values = list(self.lens_light_kwargs[0].values())
-		self.lens_light_param_keys = list(self.lens_light_kwargs[0].keys())
+		if self.add_lens_light:
+			self.lens_light_param_values = list(self.lens_light_kwargs[0].values())
+			self.lens_light_param_keys = list(self.lens_light_kwargs[0].keys())
 
 
 	@staticmethod
@@ -183,14 +201,22 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 
 	def basegrp_header(grp):
 		header_dic = {"set_size": set_size,
-					  "ZL": gen_params["ZL"],
-					  "ZS": gen_params["ZS"],
-					  "LENS_FOV": gen_params["LENS_FOV"],
-					  "SRC_FOV": gen_params["SRC_FOV"],
-					  "lens_model": gen_params["lens_model"],
-					  "src_model": gen_params["src_model"],
-					  "data_type": gen_params["data_type"],
+					  "zl": gen_params["zl"],
+					  "zs": gen_params["zs"],
+					  "npix": gen_params["npix"],
+					  "lens_fov": gen_params["lens_fov"],
+					  "src_fov": gen_params["src_fov"],
+					  "lens": gen_params["lens"],
+					  "shear": gen_params["shear_bool"],
+					  "source": gen_params["source"],
+					  "lens_params": gen_params["lens_params"],
+					  "src_params": gen_params["src_params"],
+					  "noise": gen_params["noise"],
 					  "rpf": rpf}
+
+		if gen_params["lens_light_bool"]:
+			header_dic.update({"lens_light": gen_params["lens_light"]})
+			header_dic.update({"lens_light_params": gen_params["lens_light_params"]})
 
 		grp.attrs["dataset_descriptor"] = str(header_dic)
 
@@ -205,8 +231,16 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 	prod_start = time.time()
 	ind_file = (rpw // rpf) * THIS_WORKER
 	output_file = h5py.File(os.path.join(output_path, f"{dataset_name}_{ind_file:04d}.h5"), mode=wmode)
+
+	# GL bidon for param values
+	GL_null = GalaxyLenser(**keyword_parse_GL(gen_params))
+	gen_params.update({"lens_params": GL_null.lens_param_keys})
+	gen_params.update({"src_params": GL_null.source_param_keys})
+	if gen_params["lens_light_bool"]:
+		gen_params.update({"lens_light_params": GL_null.lens_light_param_keys})
 	basegrp = output_file.create_group("base")
 	basegrp_header(basegrp)
+
 
 	for i, r in enumerate(work_ids):
 		if i % rpf == 0 and i!= 0:
@@ -216,45 +250,48 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 			basegrp = output_file.create_group("base")
 			basegrp_header(basegrp)
 
-		# generation
-		field = field_generator(**gen_params)
-		alpha1_eff, alpha2_eff, alpha1_lp, alpha2_lp = GT_generator(field, **keyword_parse_GTgen(gen_params))
 
 		# group for single realization
-		grp_r = basegrp.create_group(f"real_{r:05d}")
+		grp_r = basegrp.create_group(f"{r:05d}")
 
-		# NFW quantities
-		grp_r.create_dataset(f"NFWredshifts_{r:05d}", data=field[f"{gen_params['skey']}redshifts"], dtype=float)
-		arr_NFWparams = np.empty(shape=(4, field[f"n_{gen_params['skey'][:-1]}"]))
-		for i, dic in enumerate(field[f"{gen_params['skey']}kwargs"]):
-			arr_NFWparams[:, i] = list(dic.values())
+		# generation
+		GL = GalaxyLenser(**keyword_parse_GL(gen_params))
+		GL.produce_lens()
+		corrupt_lensed_image = GL.corrupt_image(GL.lensed_image)
 
-		grp_r.create_dataset(f"NFWparams_{r:05d}", data=arr_NFWparams, dtype=float)
+		lens_dset = grp_r.create_dataset(f"lens_{r:05d}", (gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
+		lens_dset[...] = corrupt_lensed_image
 
-		# CONV quantities
-		grp_r.create_dataset(f"CONVredshifts_{r:05d}", data=field["CONV_redshifts"], dtype=float)
-		arr_CONVparams = np.empty(field["n_CONV"])			# we do not keep the convergence sheet's ra_0 and dec_0 because they are always (?) centered
-		for i, dic in enumerate(field[f"CONV_kwargs"]):
-			arr_CONVparams[i] = dic["kappa"]
+		grp_r.create_dataset(f"lens_params_{r:05d}", data=np.array(GL.lens_param_values), dtype=float)
+		grp_r.create_dataset(f"src_params_{r:05d}", data=np.array(GL.source_param_values), dtype=float)
 
-		grp_r.create_dataset(f"CONVparams_{r:05d}", data=arr_CONVparams, dtype=float)
+		if gen_params["lens_light_bool"]:
+			corrupt_lens_deblended = GL.corrupt_image(GL.lensed_src)
+			lens_deblend_dset = grp_r.create_dataset(f"lens_deblend_{r:05d}", (gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
+			lens_deblend_dset[...] = corrupt_lens_deblended
 
-		# encode ground truth
-		a1_eff_dset = grp_r.create_dataset(f"GTa1_eff_{r:05d}", (gen_params["NPIX"], gen_params["NPIX"]), dtype=float, compression="gzip")
-		a1_eff_dset[...] = alpha1_eff
+			grp_r.create_dataset(f"lens_light_params_{r:05d}", data=np.array(GL.lens_light_param_values), dtype=float)
 
-		a2_eff_dset = grp_r.create_dataset(f"GTa2_eff_{r:05d}", (gen_params["NPIX"], gen_params["NPIX"]), dtype=float, compression="gzip")
-		a2_eff_dset[...] = alpha2_eff
-
-		a1_lp_dset = grp_r.create_dataset(f"GTa1_lp_{r:05d}", (gen_params["NPIX"], gen_params["NPIX"]), dtype=float, compression="gzip")
-		a1_lp_dset[...] = alpha1_lp
-
-		a2_lp_dset = grp_r.create_dataset(f"GTa2_lp_{r:05d}", (gen_params["NPIX"], gen_params["NPIX"]), dtype=float, compression="gzip")
-		a2_lp_dset[...] = alpha2_lp
 
 	prod_end = time.time()
 	timer = prod_end - prod_start
 	print(f"dataset produced in {int(timer // 60)} minutes {(timer % 60):.02f} seconds")
+
+
+def keyword_parse_GL(keywords_dic):
+
+	args_GL = {}
+
+	required_keys = ["zs", "zl", "beta1", "beta2", "theta1", "theta2", "npix", "shear_bool", "lens_light_bool", "noise", "psf"]
+
+	for key in required_keys:
+		if key not in keywords_dic:
+			continue
+		else:
+			args_GL[key] = keywords_dic[key]
+
+	return args_GL
+
 
 
 if __name__ == "__main__":
@@ -265,18 +302,21 @@ if __name__ == "__main__":
 
 	parser.add_argument("--path_in", type=str, default=os.path.join(os.getenv("ASTROMATIC_PATH")),
 						help="principal repo path")
-	parser.add_argument("--path_out", type=str,	default=os.path.join(os.getenv("ASTROMATIC_PATH"), "astromatic", "lens_inference", "datasets"),
+	parser.add_argument("--path_out", type=str,	default=os.path.join(os.getenv("ASTROMATIC_PATH"), "Problems", "P2_lens_inference", "datasets"),
 						help="output path")
-	parser.add_argument("--dataset", type=str, default="lenses", help="name of dataset directory")
+	parser.add_argument("--rpf", type=int, default=50, help="number of realizations per file")
+	parser.add_argument("--ow", action="store_const", const="w", default="w-",
+						help="toggle to overwrite existing dataset in same path")
+	parser.add_argument("--dataset_name", type=str, required=True, help="name of dataset directory")
 	parser.add_argument("--data_type", type=str, default="lens", help="type of data, in ['lens', 'lens_light']")
 	parser.add_argument("--zl", type=float, default="0.5", help="redshift of lens")
-	parser.add_argument("--zs", type=float, default="1.0", help="redshift of source")
+	parser.add_argument("--zs", type=float, default="1.5", help="redshift of source")
 	parser.add_argument("--npix", type=int, default=128, help="number of pixels at which to create data")
 	parser.add_argument("--pixel_scale", type=float, default=0.05, help="scale of a single pixel in arcsecs")
-
+	parser.add_argument("--shear", type=bool, default=True, help="toggle for inclusion of shear")
 	parser.add_argument("--noise", type=str, default="poisson", help="type of noise to corrupt images, in ['poisson']")
 	parser.add_argument("--psf", type=str, default="gaussian", help="type of psf to corrupt images, in ['gaussian']")
-	parser.add_argument("--size", type=int, default=None, help="size of dataset to produce")
+	parser.add_argument("--size", type=int, required=True, help="size of dataset to produce")
 	parser.add_argument("--seed", type=int, default=None, help="random seed")
 
 	args = parser.parse_args()
@@ -284,29 +324,32 @@ if __name__ == "__main__":
 	np.random.seed(args.seed)
 
 
-	gen_params = {"NPIX": args.npix,
-				  "ZL": args.zl,
-				  "ZS": args.zs,
+	gen_params = {"npix": args.npix,
+				  "zl": args.zl,
+				  "zs": args.zs,
 				  "pixel_scale": args.pixel_scale,
-				  "LENS_FOV": args.npix * args.pixel_scale,
-				  "SRC_FOV": args.npix * args.pixel_scale / 2,
-				  ""}
+				  "lens_fov": args.npix * args.pixel_scale,
+				  "src_fov": args.npix * args.pixel_scale / 2,
+				  "lens": "SIE",
+				  "shear_bool": args.shear,
+				  "lens_light_bool": True if "light" in args.data_type else False,
+				  "source": "SERSIC_ELLIPSE",
+				  "noise": args.noise,
+				  "psf": args.psf}
 
-	# --- CONSTANTS ----
-	ZL = 0.5
-	ZS = 1.0
-	NPIX = args.npix
-	pixel_scale = 0.05
-	LENS_FOV = NPIX * pixel_scale
-	SRC_FOV = 3
+	if "light" in args.data_type:
+		gen_params.update({"lens_light": "SERSIC_ELLIPSE"})
+
 
 	# source plane coordinates
-	src_grid_side = np.linspace(-SRC_FOV / 2, SRC_FOV / 2, NPIX)
-	BETA1, BETA2 = np.meshgrid(src_grid_side, src_grid_side)
+	src_grid_side = np.linspace(-gen_params["src_fov"] / 2, gen_params["src_fov"] / 2, gen_params["npix"])
+	beta1, beta2 = np.meshgrid(src_grid_side, src_grid_side)
 
 	# lens plane coordinates
-	lens_grid_side = np.linspace(-LENS_FOV / 2, LENS_FOV / 2, NPIX)
-	THETA1, THETA2 = np.meshgrid(lens_grid_side, lens_grid_side)
+	lens_grid_side = np.linspace(-gen_params["lens_fov"] / 2, gen_params["lens_fov"] / 2, gen_params["npix"])
+	theta1, theta2 = np.meshgrid(lens_grid_side, lens_grid_side)
+
+	gen_params.update({"beta1": beta1, "beta2": beta2, "theta1": theta1, "theta2": theta2})
 
 	# Lens model parambounds
 	SIE_pb = {"e1": (-0.3, 0.3),  # prior bounds on theta_E defined from log mass bounds in GalaxyLenser.sample_mass
@@ -338,37 +381,11 @@ if __name__ == "__main__":
 				   "center_x": (-0.1, 0.1),
 				   "center_y": (-0.1, 0.1)}
 
-
 	# Modifiers for lens light
 	d_e_lim = 0.01
 	d_center_lim = 0.01
 
-	if args.data_type == "lens":
-		include_lens_light = False
-	elif args.data_type == "lens_light":
-		include_lens_light = True
 
-
-	# Production
-	fig, ax = plt.subplots(nrows=4, ncols=4, figsize=(21,20))
-
-	for i in range(16):
-		GL = GalaxyLenser(noise=args.noise, psf=args.psf, include_lens_light=include_lens_light)
-		GL.produce_lens()
-		GL.corrupt_image()
-
-		display_diff(GL.lensed_image, ax[i//4, i%4], cmap="bone", lim=LENS_FOV/2)
-
-	plt.tight_layout()
-	plt.savefig("./lens_light_samples.png")
-	plt.show()
-
-	# display_diff(GL.source_light, cmap="hot")
-	# display_diff(GL.lensed_src, cmap="hot")
-	# display_diff(GL.lensed_image, cmap="hot")
-
-	# print(GL.source_kwargs)
-	# print(GL.lens_kwargs)
-	# print(GL.lens_light_kwargs)
-
-	print("debug")
+	wmode = args.ow
+	dataset_dir = os.path.join(args.path_out, args.dataset_name)
+	produce_dataset(dataset_dir, args.size, wmode, args.rpf, gen_params)
