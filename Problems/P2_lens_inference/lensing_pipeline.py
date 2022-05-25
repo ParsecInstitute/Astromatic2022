@@ -22,7 +22,7 @@ class GalaxyLenser():
 	"""
 	Class for the lensing of a single Sersic source galaxy by an SIE + SHEAR of parameters randomly sampled parameters
 	"""
-	def __init__(self, zl, zs, beta1, beta2, theta1, theta2, npix, shear_bool=True, lens_light_bool=False, noise="poisson", psf="gaussian", mass_function="beta", mass_function_kw={"a": 6.5, "b": 2.}):
+	def __init__(self, zl, zs, beta1, beta2, theta1, theta2, npix, shear_bool=True, lens_light_bool=False, noise="gaussian", psf="gaussian", normalize=True, mass_function="beta", mass_function_kw={"a": 6.5, "b": 2.}):
 
 		self.zl = zl
 		self.zs = zs
@@ -32,6 +32,7 @@ class GalaxyLenser():
 		self.add_shear = shear_bool
 		self.noise = noise
 		self.psf = psf
+		self.normalize = normalize
 		self.mass_function = mass_function
 		self.mass_function_kw = mass_function_kw
 		self.add_lens_light = lens_light_bool
@@ -43,7 +44,6 @@ class GalaxyLenser():
 			self.lens_light_paramsampler()
 
 		self.format_params()
-
 
 	def sample_mass(self, log_mlow=10.7, log_mhigh=12.):
 
@@ -138,6 +138,9 @@ class GalaxyLenser():
 		else:
 			self.lensed_image = self.lensed_src
 
+		if self.normalize:
+			self.lensed_image = self.lensed_image / np.max(np.abs(self.lensed_image))
+
 
 	def corrupt_image(self, image):
 
@@ -153,6 +156,8 @@ class GalaxyLenser():
 		if self.noise is not None:
 			if self.noise == "poisson":
 				mask = np.random.poisson(image)
+			elif self.noise == "gaussian":
+				mask = np.random.normal(loc=0., scale=0.02*np.max(np.abs(self.lensed_image)), size=(self.npix, self.npix))
 			else:
 				raise ValueError(f"noise of type '{self.noise}' not implemented")
 			image += mask
@@ -172,10 +177,25 @@ class GalaxyLenser():
 		self.source_param_values = list(self.source_kwargs[0].values())
 		self.source_param_keys = list(self.source_kwargs[0].keys())
 
+		self.param_values = self.lens_param_values + self.source_param_values
+		self.param_keys = self.lens_param_keys + self.source_param_keys
+
 		if self.add_lens_light:
 			self.lens_light_param_values = list(self.lens_light_kwargs[0].values())
 			self.lens_light_param_keys = list(self.lens_light_kwargs[0].keys())
 
+			self.param_values = self.param_values + self.lens_light_param_values
+			self.param_keys = self.param_keys + self.lens_light_param_keys
+
+		for i, v in enumerate(self.param_keys):
+			if i in range(7):
+				v_desc = "__lens_SIE_SHEAR"
+			elif i in range(7, 14):
+				v_desc = "__src_SERSIC_E"
+			elif i in range(14, 21):
+				v_desc = "__lenslight_SERSIC_E"
+
+			self.param_keys[i] = v + v_desc
 
 	@staticmethod
 	def _min_max_scale(x, a, b):
@@ -209,14 +229,12 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 					  "lens": gen_params["lens"],
 					  "shear": gen_params["shear_bool"],
 					  "source": gen_params["source"],
-					  "lens_params": gen_params["lens_params"],
-					  "src_params": gen_params["src_params"],
+					  "params": gen_params["param_keys"],
 					  "noise": gen_params["noise"],
 					  "rpf": rpf}
 
 		if gen_params["lens_light_bool"]:
 			header_dic.update({"lens_light": gen_params["lens_light"]})
-			header_dic.update({"lens_light_params": gen_params["lens_light_params"]})
 
 		grp.attrs["dataset_descriptor"] = str(header_dic)
 
@@ -234,13 +252,15 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 
 	# GL bidon for param values
 	GL_null = GalaxyLenser(**keyword_parse_GL(gen_params))
-	gen_params.update({"lens_params": GL_null.lens_param_keys})
-	gen_params.update({"src_params": GL_null.source_param_keys})
-	if gen_params["lens_light_bool"]:
-		gen_params.update({"lens_light_params": GL_null.lens_light_param_keys})
+	GL_null.format_params()
+	gen_params.update({"param_keys": GL_null.param_keys})
 	basegrp = output_file.create_group("base")
 	basegrp_header(basegrp)
 
+	lens_dset = basegrp.create_dataset(f"lenses", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
+	param_dset = basegrp.create_dataset(f"params", (rpf, len(gen_params["param_keys"])), dtype=float, compression="gzip")
+	if gen_params["lens_light_bool"]:
+		deblend_dset = basegrp.create_dataset(f"lenses_deblended", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
 
 	for i, r in enumerate(work_ids):
 		if i % rpf == 0 and i!= 0:
@@ -250,28 +270,26 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 			basegrp = output_file.create_group("base")
 			basegrp_header(basegrp)
 
-
-		# group for single realization
-		grp_r = basegrp.create_group(f"{r:05d}")
+			lens_dset = basegrp.create_dataset(f"lenses_{ind_file:04d}", (rpf, gen_params["npix"], gen_params["npix"]),
+											   dtype=float, compression="gzip")
+			param_dset = basegrp.create_dataset(f"params_{ind_file:04d}", (rpf, len(gen_params["param_keys"])), dtype=float,
+											compression="gzip")
+			if gen_params["lens_light_bool"]:
+				deblend_dset = basegrp.create_dataset(f"lenses_deblended_{ind_file:04d}",
+													  (rpf, gen_params["npix"], gen_params["npix"]), dtype=float,
+													  compression="gzip")
 
 		# generation
 		GL = GalaxyLenser(**keyword_parse_GL(gen_params))
 		GL.produce_lens()
 		corrupt_lensed_image = GL.corrupt_image(GL.lensed_image)
 
-		lens_dset = grp_r.create_dataset(f"lens_{r:05d}", (gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
-		lens_dset[...] = corrupt_lensed_image
-
-		grp_r.create_dataset(f"lens_params_{r:05d}", data=np.array(GL.lens_param_values), dtype=float)
-		grp_r.create_dataset(f"src_params_{r:05d}", data=np.array(GL.source_param_values), dtype=float)
+		lens_dset[i%rpf, ...] = corrupt_lensed_image
+		param_dset[i%rpf, ...] = np.array(GL.param_values)
 
 		if gen_params["lens_light_bool"]:
 			corrupt_lens_deblended = GL.corrupt_image(GL.lensed_src)
-			lens_deblend_dset = grp_r.create_dataset(f"lens_deblend_{r:05d}", (gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
-			lens_deblend_dset[...] = corrupt_lens_deblended
-
-			grp_r.create_dataset(f"lens_light_params_{r:05d}", data=np.array(GL.lens_light_param_values), dtype=float)
-
+			deblend_dset[i%rpf, ...] = corrupt_lens_deblended
 
 	prod_end = time.time()
 	timer = prod_end - prod_start
@@ -282,7 +300,7 @@ def keyword_parse_GL(keywords_dic):
 
 	args_GL = {}
 
-	required_keys = ["zs", "zl", "beta1", "beta2", "theta1", "theta2", "npix", "shear_bool", "lens_light_bool", "noise", "psf"]
+	required_keys = ["zs", "zl", "beta1", "beta2", "theta1", "theta2", "npix", "shear_bool", "lens_light_bool", "noise", "psf", "normalize"]
 
 	for key in required_keys:
 		if key not in keywords_dic:
@@ -316,6 +334,7 @@ if __name__ == "__main__":
 	parser.add_argument("--shear", type=bool, default=True, help="toggle for inclusion of shear")
 	parser.add_argument("--noise", type=str, default="poisson", help="type of noise to corrupt images, in ['poisson']")
 	parser.add_argument("--psf", type=str, default="gaussian", help="type of psf to corrupt images, in ['gaussian']")
+	parser.add_argument("--normalize", action="store_true", help="normalize lensed images")
 	parser.add_argument("--size", type=int, required=True, help="size of dataset to produce")
 	parser.add_argument("--seed", type=int, default=None, help="random seed")
 
@@ -335,7 +354,8 @@ if __name__ == "__main__":
 				  "lens_light_bool": True if "light" in args.data_type else False,
 				  "source": "SERSIC_ELLIPSE",
 				  "noise": args.noise,
-				  "psf": args.psf}
+				  "psf": args.psf,
+				  "normalize": args.normalize}
 
 	if "light" in args.data_type:
 		gen_params.update({"lens_light": "SERSIC_ELLIPSE"})
