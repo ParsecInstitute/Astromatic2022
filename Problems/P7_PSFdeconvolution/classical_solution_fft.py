@@ -17,5 +17,5 @@ def fft_deconvolve(image, psf):
 
     deconvolved_fft = image_fft / psf_fft
 
-    return np.real(ifft(deconvolved_image))
+    return np.real(ifft(deconvolved_fft))
     
