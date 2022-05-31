@@ -1,3 +1,4 @@
+import numpy as np
 from skimage.restoration import richardson_lucy
 
 
@@ -11,8 +12,8 @@ def deconvolve_lucyrichardson(image, psf, n_iter=50):
     """
 
     # Ensure PSF has odd number of pixels because that's easier
-    assert psf.shape[0] % 2 == 0, "psf image must have odd number of pixels"
-    assert psf.shape[1] % 2 == 0, "psf image must have odd number of pixels"
+    assert psf.shape[0] % 2 != 0, "psf image must have odd number of pixels"
+    assert psf.shape[1] % 2 != 0, "psf image must have odd number of pixels"
 
     # Record pixel flux limits from image. These are used to scale to the -1,1 range
     dmax = np.max(image)
@@ -22,7 +23,7 @@ def deconvolve_lucyrichardson(image, psf, n_iter=50):
     deconv = richardson_lucy(
         2 * (image - dmin) / (dmax - dmin) - 1,
         psf,
-        iterations=n_iter,
+        num_iter=n_iter,
     )
 
     # Rescale back to the original flux range and return

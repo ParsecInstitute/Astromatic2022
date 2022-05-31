@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.fft import fft2, ifft2
+from scipy.fft import fft2, ifft
 
 
 def deconvolve_fft(image, psf):
@@ -11,11 +11,11 @@ def deconvolve_fft(image, psf):
     """
 
     # Ensure PSF has odd number of pixels because that's easier
-    assert psf.shape[0] % 2 == 0, "psf image must have odd number of pixels"
-    assert psf.shape[1] % 2 == 0, "psf image must have odd number of pixels"
+    assert psf.shape[0] % 2 != 0, "psf image must have odd number of pixels"
+    assert psf.shape[1] % 2 != 0, "psf image must have odd number of pixels"
 
     # ensure image has odd number of pixels because that's easier
-    if np.any(image.shape % 2 == 0):
+    if np.any(np.array(image.shape) % 2 == 0):
         print(
             "WARNING: input image has even number of pixles, Im going to remove a pixel from that side."
         )
@@ -32,7 +32,7 @@ def deconvolve_fft(image, psf):
     deconvolved_fft = image_fft / psf_fft
 
     # Return real space deconvolved image
-    deconvolved_image = np.real(ifft2(deconvolved_fft))
+    deconvolved_image = np.real(ifft(deconvolved_fft))
 
     return deconvolved_image
     
