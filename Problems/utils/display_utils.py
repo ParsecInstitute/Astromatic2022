@@ -7,6 +7,9 @@ import matplotlib.cm as cm
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from astropy.visualization import SqrtStretch, LogStretch, HistEqStretch
+from astropy.visualization.mpl_normalize import ImageNormalize
+from scipy.stats import iqr
 
 
 def display(arr, ax=None, lim=1, mid=0, title=None, fs=16, norm=None, cmap="binary_r", cbar=True, axis=True):
@@ -20,7 +23,18 @@ def display(arr, ax=None, lim=1, mid=0, title=None, fs=16, norm=None, cmap="bina
 		norm_kw.update({"norm": colors.CenteredNorm(vcenter=mid)})
 	elif norm == "Log":
 		norm_kw.update({"norm": colors.LogNorm()})
-
+	elif norm == "HistEqStretch":
+		arr -= np.median(arr)
+		noise = iqr(arr, rng = (16, 84))/2
+		norm_kw.update({"norm": ImageNormalize(stretch=HistEqStretch(arr[arr <= 3*noise]), clip=False, vmax=3*noise, vmin=np.min(arr))})
+	elif norm == "LogStretch":
+		arr -= np.median(arr)
+		noise = iqr(arr, rng = (16, 84))/2
+		arr = np.ma.masked_where(arr < 3*noise, arr)
+		norm_kw.update({"norm": ImageNormalize(stretch=LogStretch(), clip=False),
+					   "clim": [3*noise, None],
+					   "interpolation": "none"})
+		
 	im = ax.imshow(arr, origin='lower', extent=(-lim, lim, -lim, lim),
 				   cmap=cmap, **norm_kw)
 

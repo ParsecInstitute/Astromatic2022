@@ -1,3 +1,4 @@
+import numpy as np
 from scipy.fft import fft2, ifft2
 
 
@@ -31,7 +32,7 @@ def deconvolve_fft(image, psf):
     deconvolved_fft = image_fft / psf_fft
 
     # Return real space deconvolved image
-    deconvolved_image = np.real(ifft(deconvolved_fft))
+    deconvolved_image = np.real(ifft2(deconvolved_fft))
 
     return deconvolved_image
     
