@@ -128,5 +128,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# PyCharm stuff
+# pyCharm  stuff
 .idea/
+
+# Project-related
+datasets/
