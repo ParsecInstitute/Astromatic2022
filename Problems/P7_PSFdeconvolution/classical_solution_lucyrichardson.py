@@ -2,7 +2,7 @@ import numpy as np
 from skimage.restoration import richardson_lucy
 
 
-def deconvolve_lucyrichardson(image, psf, n_iter=50):
+def deconvolve_lucyrichardson(image, psf, n_iter=30, pad_size = 100):
     """
     Deconvolve a PSF from an image and return the sharpened image.
 
@@ -18,13 +18,15 @@ def deconvolve_lucyrichardson(image, psf, n_iter=50):
     # Record pixel flux limits from image. These are used to scale to the -1,1 range
     dmax = np.max(image)
     dmin = np.min(image)
-
+    
+    image = np.pad(image, pad_width = pad_size, mode = 'wrap')
+    
     # Perform the LR deconvolution on the scaled image
     deconv = richardson_lucy(
         2 * (image - dmin) / (dmax - dmin) - 1,
         psf,
         num_iter=n_iter,
     )
-
+    deconv = (deconv + 1) * ((dmax - dmin) / 2) + dmin
     # Rescale back to the original flux range and return
-    return (deconv + 1) * ((dmax - dmin) / 2) + dmin
+    return deconv[pad_size:-pad_size,pad_size:-pad_size]

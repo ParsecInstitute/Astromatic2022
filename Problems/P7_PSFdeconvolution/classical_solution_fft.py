@@ -1,8 +1,8 @@
 import numpy as np
-from scipy.fft import fft2, ifft
+from scipy.fft import fft2, ifft2, fftshift, ifftshift
+import matplotlib.pyplot as plt
 
-
-def deconvolve_fft(image, psf):
+def deconvolve_fft(image, psf, pad_size = 100):
     """
     Deconvolve a PSF from an image and return the sharpened image.
 
@@ -13,26 +13,19 @@ def deconvolve_fft(image, psf):
     # Ensure PSF has odd number of pixels because that's easier
     assert psf.shape[0] % 2 != 0, "psf image must have odd number of pixels"
     assert psf.shape[1] % 2 != 0, "psf image must have odd number of pixels"
-
-    # ensure image has odd number of pixels because that's easier
-    if np.any(np.array(image.shape) % 2 == 0):
-        print(
-            "WARNING: input image has even number of pixles, Im going to remove a pixel from that side."
-        )
-    image = image[
-        0 : image.shape[0] - 1 + (image.shape[0] % 2),
-        0 : image.shape[1] - 1 + (image.shape[1] % 2),
-    ]
-
+    
+    image = np.pad(image, pad_width = pad_size, mode = 'edge')
+    
     # Convert image and psf to frequency space
-    image_fft = fft2(image)
-    psf_fft = fft2(psf, image.shape)
-
+    image_fft = fftshift(fft2(image))
+    psf_fft = fftshift(fft2(psf, image.shape)) 
     # Deconvolution operation is division in frequency space
     deconvolved_fft = image_fft / psf_fft
-
+    cut_freq = int(image.shape[0]/2 - 5*psf.shape[0])
+    smooth_fft = np.zeros(deconvolved_fft.shape)
+    smooth_fft[cut_freq:-cut_freq,cut_freq:-cut_freq] = deconvolved_fft[cut_freq:-cut_freq,cut_freq:-cut_freq]
     # Return real space deconvolved image
-    deconvolved_image = np.real(ifft(deconvolved_fft))
+    deconvolved_image = np.abs(ifft2(ifftshift(smooth_fft)))
 
-    return deconvolved_image
+    return deconvolved_image[pad_size:-pad_size,pad_size:-pad_size]
     
