@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.fft import fft2, ifft
+from scipy.fft import fft2, ifft2
 
 
 def deconvolve_fft(image, psf):
@@ -29,10 +29,13 @@ def deconvolve_fft(image, psf):
     psf_fft = fft2(psf, image.shape)
 
     # Deconvolution operation is division in frequency space
-    deconvolved_fft = image_fft / psf_fft
+    deconvolved_fft = np.nan_to_num(image_fft / psf_fft)
 
+	
+	
     # Return real space deconvolved image
-    deconvolved_image = np.real(ifft(deconvolved_fft))
+    deconvolved_image = np.real(ifft2(deconvolved_fft))
+    # deconvolved_image = np.real(ifft2(np.divide(image_fft, psf_fft)))
 
     return deconvolved_image
     

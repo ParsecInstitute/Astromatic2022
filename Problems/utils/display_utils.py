@@ -27,6 +27,7 @@ def display(arr, ax=None, lim=1, mid=0, title=None, fs=16, norm=None, cmap="bina
 		arr -= np.median(arr)
 		noise = iqr(arr, rng = (16, 84))/2
 		norm_kw.update({"norm": ImageNormalize(stretch=HistEqStretch(arr[arr <= 3*noise]), clip=False, vmax=3*noise, vmin=np.min(arr))})
+		# norm_kw.update({"norm": ImageNormalize(stretch=HistEqStretch(arr), clip=False)})
 	elif norm == "LogStretch":
 		arr -= np.median(arr)
 		noise = iqr(arr, rng = (16, 84))/2

@@ -2,7 +2,7 @@ import numpy as np
 from skimage.restoration import richardson_lucy
 
 
-def deconvolve_lucyrichardson(image, psf, n_iter=50):
+def deconvolve_lucyrichardson(image, psf, n_iter=100, filter_epsilon=None):
     """
     Deconvolve a PSF from an image and return the sharpened image.
 
@@ -24,6 +24,7 @@ def deconvolve_lucyrichardson(image, psf, n_iter=50):
         2 * (image - dmin) / (dmax - dmin) - 1,
         psf,
         num_iter=n_iter,
+		filter_epsilon=filter_epsilon
     )
 
     # Rescale back to the original flux range and return
