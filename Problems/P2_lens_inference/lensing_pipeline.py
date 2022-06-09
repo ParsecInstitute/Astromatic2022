@@ -247,7 +247,7 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 		work_ids = real_ids[THIS_WORKER * rpw:]
 
 	prod_start = time.time()
-	ind_file = (rpw // rpf) * THIS_WORKER
+	ind_file = (rpw // rpf + 1) * THIS_WORKER
 	output_file = h5py.File(os.path.join(output_path, f"{dataset_name}_{ind_file:04d}.h5"), mode=wmode)
 
 	# GL bidon for param values
