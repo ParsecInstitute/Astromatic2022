@@ -17,7 +17,7 @@ def select_activation(activ_str, activation_kw={}, inplace=False):
 
 
 class VanillaCNN(nn.Module):
-	def __init__(self, in_ch=2, activation="ReLU"):
+	def __init__(self, npix, in_ch=2, out_ch=1, activation="ReLU"):
 		"""
 		A simple CNN implementation for image-to-image regression. Works for npix=129
 		:param in_ch:
@@ -25,35 +25,43 @@ class VanillaCNN(nn.Module):
 		"""
 		super().__init__()
 
-		self.activation = select_activation(activ_str=activation)
+		self.activation = select_activation(activ_str=activation, inplace=True)
 
 		self.encoder = nn.Sequential(
-			nn.Conv2d(in_channels=in_ch, out_channels=16, kernel_size=4, stride=4, padding=1), 	# in: (2,129,129) | out: (16,32,32)
-			self.activation(),
-			nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding="same"), 			# in: (16,32,32) | out: (32,32,32)
-			self.activation(),
-			nn.AvgPool2d(kernel_size=2), 														# in: (32,32,32) | out: (32,16,16)
-			nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding="same"), 			# in: (32,16,16) | out: (64,16,16)
-			self.activation(),
-			nn.AvgPool2d(kernel_size=2),  														# in: (64,16,16) | out: (64,8,8)
-			nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding="same"), 		# in: (64,8,8) | out: (128,8,8)
-			self.activation(),
-			nn.AvgPool2d(kernel_size=2), 														# in: (128,8,8) | out: (128,4,4)
-			nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding="same"),  		# in: (128,4,4) | out: (256,4,4)
-			self.activation()
+			nn.Conv2d(in_channels=in_ch, out_channels=16, kernel_size=3, padding="same"), 		# in: (2,npix,npix) | out: (16,npix,npix)
+			self.activation,
+			nn.AvgPool2d(kernel_size=2),														# in (16, npix, npix) | out: (16, npix//2, npix//2
+			nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding="same"), 			# in: (16,npix//2,npix//2) | out: (32,npix//2,npix//2)
+			self.activation,
+			nn.AvgPool2d(kernel_size=2), 														# in: (32,npix//2,npix//2) | out: (32,npix//4,npix//4)
+			nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding="same"), 			# in: (32,npix//4,npix//4) | out: (64,npix//4,npix//4)
+			self.activation,
+			nn.AvgPool2d(kernel_size=2),  														# in: (64,npix//4,npix//4) | out: (64,npix//8,npix//8)
+			nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding="same"), 		# in: (64,npix//8,npix//8) | out: (128,npix//8,npix//8)
+			self.activation,
+			nn.AvgPool2d(kernel_size=2), 														# in: (128,npix//8,npix//8) | out: (128,npix//16,npix//16)
+			nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding="same"),  		# in: (128,npix//16,npix//16) | out: (256,npix//16,npix//16)
+			self.activation
 		)
 
 		self.decoder = nn.Sequential(
-			nn.UpsamplingBilinear2d(scale_factor=2),											# in: (256,4,4) | out: (256,8,8)
-			nn.Conv2d(in_channels=256, out_channels=128, kernel_size=3, padding="same"),		# in: (256,8,8) | out: (128,8,8)
-			self.activation(),
-			nn.UpsamplingBilinear2d(scale_factor=2),  											# in: (128,8,8) | out: (128,16,16)
-			nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, padding="same"),			# in: (128,16,16) | out: (64,16,16)
-			self.activation(),
-			nn.UpsamplingBilinear2d(scale_factor=2),  											# in: (64,16,16) | out: (64,32,32)
-			nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, padding="same"),			# in: (64,32,32) | out: (32,32,32)
-			self.activation(),
-			nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, padding="same"),			# in: (32,32,32) | out: (16,32,32)
-			self.activation(),
-			nn.ConvTranspose2d()	# TODO
+			nn.UpsamplingBilinear2d(scale_factor=2),											# in: (256,npix//16,npix//16) | out: (256,npix//8,npix//8)
+			nn.Conv2d(in_channels=256, out_channels=128, kernel_size=3, padding="same"),		# in: (256,npix//,npix//8) | out: (128,npix//8,npix//8)
+			self.activation,
+			nn.UpsamplingBilinear2d(scale_factor=2),  											# in: (128,npix//8,npix//8) | out: (128,npix//4,npix//4)
+			nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, padding="same"),			# in: (128,npix//4,npix//4) | out: (64,npix//4,npix//4)
+			self.activation,
+			nn.UpsamplingBilinear2d(scale_factor=2),  											# in: (64,npix//4,npix//4) | out: (64,npix//2,npix//2)
+			nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, padding="same"),			# in: (64,npix//2,npix//2) | out: (32,npix//2,npix//2)
+			self.activation,
+			nn.UpsamplingBilinear2d(scale_factor=2),											# in: (32,npix//2,npix//2) | out: (32,npix,npix)
+			nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, padding="same"),			# in: (32,npix,npix) | out: (16,npix,npix)
+			self.activation,
+			nn.Conv2d(in_channels=16, out_channels=out_ch, kernel_size=3, padding="same")			# in: (16,npix,npix) | out: (1,npix,npix)
 		)
+
+	def forward(self, x):
+		x = self.encoder(x)
+		return self.decoder(x)
+
+

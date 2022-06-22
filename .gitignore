@@ -130,3 +130,10 @@ dmypy.json
 
 # PyCharm stuff
 .idea/
+
+# Datasets
+*.h5
+*.hdf5
+
+# Saved torch models
+*.pt

@@ -28,13 +28,16 @@ class PSFDataset(Dataset):
 						desc = ast.literal_eval(h5_file["base"].attrs["dataset_descriptor"])
 						self.set_size = desc["set_size"]
 						self.npix = desc["npix"]
+						self.psf_npix = desc["psf_npix"]
 						self.rpf = desc["rpf"]
-
+						break
 				except:
 					time.sleep(1.)
 					continue
 				else:
 					break
+
+		self.psf_padw = self.npix//2 - (self.psf_npix+1)//2
 
 		self.all_ids = np.arange(self.set_size)
 
@@ -60,11 +63,11 @@ class PSFDataset(Dataset):
 		get single sample from dataset
 		"""
 		sample_id = self.ids[self.method][idx]
-		sample_file = self.file_list[sample_id%self.rpf]
+		sample_file = self.file_list[sample_id//self.rpf]
 
-		element_id = sample_id//self.rpf
+		element_id = sample_id%self.rpf
 
-		# algorithm to avoid hypy IOError when many workers read same file
+		# algorithm to avoid h5py IOError when many workers read same file
 		while True:
 			try:
 				with h5py.File(sample_file, mode="r") as h5_file:
@@ -77,8 +80,13 @@ class PSFDataset(Dataset):
 			else:
 				break
 
+		assert corrupt_arr.shape[0] % 2 ==0 and truth_arr.shape[0] % 2 == 0 and corrupt_arr.shape == truth_arr.shape
+		assert psf_arr.shape[0] % 2 != 0			# check that psf has odd # of pixels to a side
+
+		psf_padded = np.pad(psf_arr, ((self.psf_padw, self.psf_padw+1), (self.psf_padw, self.psf_padw+1)))
+
 		corrupt_tensor = torch.tensor(corrupt_arr).reshape(1, self.npix, self.npix)
-		psf_tensor = torch.tensor(psf_arr).reshape(1, self.npix, self.npix)
+		psf_tensor = torch.tensor(psf_padded).reshape(1, self.npix, self.npix)
 		y = torch.tensor(truth_arr).reshape(1, self.npix, self.npix)
 
 		x = torch.cat((corrupt_tensor, psf_tensor), 0)

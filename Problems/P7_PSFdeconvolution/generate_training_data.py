@@ -6,6 +6,7 @@ from utils.desi_image_downloader import get_image
 from astropy.convolution import convolve, convolve_fft, Gaussian2DKernel, AiryDisk2DKernel
 import time
 import h5py
+from scipy.stats import iqr
 
 
 # total number of slurm workers detected
@@ -39,44 +40,49 @@ class DataPicker():
 		self.window = square_window(self.npix, self.aperture_frac)
 
 	def select(self):
+		# timeouts = 0
 		while True:
 			RA = np.random.uniform(low=RA_bounds[0], high=RA_bounds[1])
 			DEC = np.random.uniform(low=DEC_bounds[0], high=DEC_bounds[1])
-			cutout, header = get_image(RA, DEC, size=self.npix)
+			try:
+				cutout, header = get_image(RA, DEC, size=self.npix)
+			except:
+				# timeouts += 1
+				continue
 			light_sum = np.sum(self.window * cutout)
 			no_sat = np.all(cutout < self.sat_pixel)
 			if light_sum > self.min_sum and no_sat:
 				break
 			print("bad cutout, retrying...")
+		# print(f"{timeouts} timeouts")
 		return cutout
 
 
 class Corrupter():
-	def __init__(self, npix, psf="gaussian", noise="gaussian", noise_scale=0.02):
+	def __init__(self, npix, psf_npix, psf="gaussian", noise="gaussian"):
 
 		self.npix = npix
+		self.psf_npix = psf_npix
 		self.psf = psf
 		self.noise = noise
-		self.noise_scale = noise_scale
 
 	def add_psf(self, img):
 		if self.psf == "gaussian":
 			width = np.random.uniform(low=psfwidth_bounds[0], high=psfwidth_bounds[1])
 			self.radius = Corrupter.fwhm2std(width)
-			kernel = Gaussian2DKernel(x_stddev=self.radius, x_size=self.npix, y_size=self.npix)
+			kernel = Gaussian2DKernel(x_stddev=self.radius, x_size=self.psf_npix, y_size=self.psf_npix)
 		elif self.psf == "airy":
 			self.radius = np.random.uniform(low=psfwidth_bounds[0], high=psfwidth_bounds[1])
-			kernel = AiryDisk2DKernel(radius=self.radius, x_size=self.npix, y_size=self.npix)
+			kernel = AiryDisk2DKernel(radius=self.radius, x_size=self.psf_npix, y_size=self.psf_npix)
 		else:
 			raise ValueError(f"psf of type '{self.psf}' not implemented")
-		blurry_img = convolve_fft(img, kernel)
+		blurry_img = convolve(img, kernel)
 		return blurry_img, kernel.array
 
 	def add_noise(self, img):
-		if self.noise == "poisson":
-			mask = np.random.poisson(self.noise_scale, size=(self.npix, self.npix))
-		elif self.noise == "gaussian":
-			mask = np.random.normal(loc=0., scale=self.noise_scale * np.max(np.abs(img)), size=(self.npix, self.npix))
+		if self.noise == "gaussian":
+			scale = iqr(img, rng=(16,84))/2
+			mask = np.random.normal(loc=0., scale=scale, size=(self.npix, self.npix))
 		else:
 			raise ValueError(f"noise of type '{self.noise}' not implemented")
 		img += mask
@@ -109,6 +115,7 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 	def basegrp_header(grp):
 		header_dic = {"set_size": set_size,
 					  "npix": gen_params["npix"],
+					  "psf_npix": gen_params["psf_npix"],
 					  "psf": gen_params["psf"],
 					  "noise": gen_params["noise"],
 					  "rpf": rpf}
@@ -134,7 +141,7 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 	corrupter = Corrupter(**gen_params)
 
 	corrupt_dset = basegrp.create_dataset(f"corrupt", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
-	psf_dset = basegrp.create_dataset(f"psf", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
+	psf_dset = basegrp.create_dataset(f"psf", (rpf, gen_params["psf_npix"], gen_params["psf_npix"]), dtype=float, compression="gzip")
 	truth_dset = basegrp.create_dataset(f"truth", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
 
 	for i, r in enumerate(work_ids):
@@ -147,7 +154,7 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 
 			corrupt_dset = basegrp.create_dataset(f"corrupt", (rpf, gen_params["npix"], gen_params["npix"]),
 												  dtype=float, compression="gzip")
-			psf_dset = basegrp.create_dataset(f"psf", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float,
+			psf_dset = basegrp.create_dataset(f"psf", (rpf, gen_params["psf_npix"], gen_params["psf_npix"]), dtype=float,
 											  compression="gzip")
 			truth_dset = basegrp.create_dataset(f"truth", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float,
 												compression="gzip")
@@ -182,7 +189,8 @@ if __name__ == "__main__":
 	parser.add_argument("--ow", action="store_const", const="w", default="w-",
 						help="toggle to overwrite existing dataset in same path")
 	parser.add_argument("--dataset_name", type=str, required=True, help="name of dataset directory")
-	parser.add_argument("--npix", type=int, default=129, help="number of pixels at which to create data")
+	parser.add_argument("--npix", type=int, default=256, help="number of pixels of selected cuts")
+	parser.add_argument("--psf_npix", type=int, default=49, help="pixel size of psf, must be odd")
 	parser.add_argument("--psf", type=str, default="gaussian",
 						help="type of psf to corrupt images, in ['gaussian', 'airy']")
 	parser.add_argument("--noise", type=str, default="gaussian",
@@ -195,13 +203,14 @@ if __name__ == "__main__":
 	np.random.seed(args.seed)
 
 	gen_params = {"npix": args.npix,
+				  "psf_npix": args.psf_npix,
 				  "noise": args.noise,
 				  "psf": args.psf}
 
 	# BOUNDS
 	RA_bounds = (115, 260)
 	DEC_bounds = (0, 80)
-	psfwidth_bounds = (4, 8)
+	psfwidth_bounds = (4, 8) 		# psf_npix of 49 is too narrow for around 8pix width
 
 	wmode = args.ow
 	dataset_dir = os.path.join(args.path_out, args.dataset_name)
