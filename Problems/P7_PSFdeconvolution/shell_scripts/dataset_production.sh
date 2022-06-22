@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=def-hezaveh
-#SBATCH --array=0-39
+#SBATCH --array=0-49
 #SBATCH --mem-per-cpu=32G
 #SBATCH --time=24:00:00
 
