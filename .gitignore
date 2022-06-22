@@ -142,3 +142,6 @@ dmypy.json
 *.core
 core.*
 *.out
+
+# Project-related
+datasets/*
