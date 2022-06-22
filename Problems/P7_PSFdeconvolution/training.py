@@ -1,6 +1,6 @@
 import sys
-sys.path.insert(0, "../")
 import os
+sys.path.insert(0, os.path.join(os.getenv("ASTROMATIC_PATH"), "Problems"))
 import json
 from glob import glob
 import argparse

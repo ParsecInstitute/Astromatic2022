@@ -137,3 +137,8 @@ dmypy.json
 
 # Saved torch models
 *.pt
+
+# Compute canada stuff
+*.core
+core.*
+*.out
