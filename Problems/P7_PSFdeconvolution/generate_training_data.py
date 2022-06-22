@@ -1,6 +1,6 @@
 import sys
-sys.path.insert(0, "../")
 import os
+sys.path.insert(0, os.path.join(os.getenv("ASTROMATIC_PATH"), "Problems"))
 import numpy as np
 from utils.desi_image_downloader import get_image
 from astropy.convolution import convolve, convolve_fft, Gaussian2DKernel, AiryDisk2DKernel
