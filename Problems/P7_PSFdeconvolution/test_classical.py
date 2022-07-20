@@ -1,5 +1,5 @@
 import sys
-sys.path.append('../utils/')
+sys.path.append('utils/')
 from desi_image_downloader import get_image
 import matplotlib.pyplot as plt
 import numpy as np

@@ -4,9 +4,11 @@ sys.path.insert(0, os.path.join(os.getenv("ASTROMATIC_PATH"), "Problems"))
 import numpy as np
 from utils.desi_image_downloader import get_image
 from astropy.convolution import convolve, convolve_fft, Gaussian2DKernel, AiryDisk2DKernel
+from astropy.io import fits
 import time
 import h5py
 from scipy.stats import iqr
+from tqdm import tqdm
 
 
 # total number of slurm workers detected
@@ -31,24 +33,29 @@ def square_window(npix, aperture_frac=1.):
 
 
 class DataPicker():
-	def __init__(self, npix, min_sum=10, sat_pixel=9, aperture_frac=1.):
+	def __init__(self, npix, cuts_dataset, min_sum=10, sat_pixel=9, aperture_frac=1.):
 
 		self.npix = npix
 		self.min_sum = min_sum
 		self.sat_pixel = sat_pixel
 		self.aperture_frac = aperture_frac
 		self.window = square_window(self.npix, self.aperture_frac)
+		self.cuts_dataset = cuts_dataset
+		self.cuts_id = 0
 
 	def select(self):
 		# timeouts = 0
 		while True:
-			RA = np.random.uniform(low=RA_bounds[0], high=RA_bounds[1])
-			DEC = np.random.uniform(low=DEC_bounds[0], high=DEC_bounds[1])
-			try:
-				cutout, header = get_image(RA, DEC, size=self.npix)
-			except:
-				# timeouts += 1
-				continue
+			# RA = np.random.uniform(low=RA_bounds[0], high=RA_bounds[1])
+			# DEC = np.random.uniform(low=DEC_bounds[0], high=DEC_bounds[1])
+			# try:
+			# 	cutout, header = get_image(RA, DEC, size=self.npix)
+			# except:
+			# 	# timeouts += 1
+			# 	continue
+			hdul = fits.open(os.path.join(self.cuts_dataset, f"cut{self.cuts_id:05d}.fits"))
+			self.cuts_id += 1
+			cutout = hdul[0].data
 			light_sum = np.sum(self.window * cutout)
 			no_sat = np.all(cutout < self.sat_pixel)
 			if light_sum > self.min_sum and no_sat:
@@ -76,9 +83,9 @@ class Corrupter():
 			kernel = AiryDisk2DKernel(radius=self.radius, x_size=self.psf_npix, y_size=self.psf_npix)
 		else:
 			raise ValueError(f"psf of type '{self.psf}' not implemented")
-		blurry_img = convolve(img, kernel)
+		# blurry_img = convolve(img, kernel)
+		blurry_img = convolve_fft(img, kernel)
 		return blurry_img, kernel.array
-
 	def add_noise(self, img):
 		if self.noise == "gaussian":
 			scale = iqr(img, rng=(16,84))/2
@@ -93,7 +100,7 @@ class Corrupter():
 		return width ** 2 / (8*np.log(2))
 
 
-def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
+def produce_dataset(output_path, cuts_dataset_dir, set_size, wmode="w-", rpf=50, gen_params={}):
 	"""
 	Produce a dataset of corrupt DESI images
 	:param output_path: path to dataset directory (str)
@@ -137,14 +144,14 @@ def produce_dataset(output_path, set_size, wmode="w-", rpf=50, gen_params={}):
 	basegrp = output_file.create_group("base")
 	basegrp_header(basegrp)
 
-	picker = DataPicker(gen_params["npix"])
+	picker = DataPicker(gen_params["npix"], cuts_dataset_dir)
 	corrupter = Corrupter(**gen_params)
 
 	corrupt_dset = basegrp.create_dataset(f"corrupt", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
 	psf_dset = basegrp.create_dataset(f"psf", (rpf, gen_params["psf_npix"], gen_params["psf_npix"]), dtype=float, compression="gzip")
 	truth_dset = basegrp.create_dataset(f"truth", (rpf, gen_params["npix"], gen_params["npix"]), dtype=float, compression="gzip")
 
-	for i, r in enumerate(work_ids):
+	for i, r in tqdm(enumerate(work_ids)):
 		if i % rpf == 0 and i!= 0:
 			output_file.close()
 			ind_file += 1
@@ -189,6 +196,7 @@ if __name__ == "__main__":
 	parser.add_argument("--ow", action="store_const", const="w", default="w-",
 						help="toggle to overwrite existing dataset in same path")
 	parser.add_argument("--dataset_name", type=str, required=True, help="name of dataset directory")
+	parser.add_argument("--cuts_dataset", type=str, required=True, help="name of dataset containing raw DESI cuts")
 	parser.add_argument("--npix", type=int, default=256, help="number of pixels of selected cuts")
 	parser.add_argument("--psf_npix", type=int, default=49, help="pixel size of psf, must be odd")
 	parser.add_argument("--psf", type=str, default="gaussian",
@@ -214,4 +222,5 @@ if __name__ == "__main__":
 
 	wmode = args.ow
 	dataset_dir = os.path.join(args.path_out, args.dataset_name)
-	produce_dataset(dataset_dir, args.size, wmode, args.rpf, gen_params)
+	cuts_dataset_dir = os.path.join(args.path_out, args.cuts_dataset)
+	produce_dataset(dataset_dir, cuts_dataset_dir, args.size, wmode, args.rpf, gen_params)
