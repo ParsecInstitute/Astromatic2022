@@ -3,6 +3,6 @@
 #source $HOME/venvs/astromatic/bin/activate
 
 python $ASTROMATIC_PATH/Problems/P7_PSFdeconvolution/desi_downloader_script.py\
-  --size=25\
-  --dataset_name=dummy_cuts\
-  --npix=128
+  --size=200000\
+  --dataset_name=cuts_256_200k\
+  --npix=256
