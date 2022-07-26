@@ -339,27 +339,25 @@ if __name__ == "__main__":
 	parser.add_argument("--seed", type=int, default=None, help="random seed")
 
 	args = parser.parse_args()
-
 	np.random.seed(args.seed)
-
-
-	gen_params = {"npix": args.npix,
-				  "zl": args.zl,
-				  "zs": args.zs,
-				  "pixel_scale": args.pixel_scale,
-				  "lens_fov": args.npix * args.pixel_scale,
-				  "src_fov": args.npix * args.pixel_scale / 2,
-				  "lens": "SIE",
-				  "shear_bool": args.shear,
-				  "lens_light_bool": True if "light" in args.data_type else False,
-				  "source": "SERSIC_ELLIPSE",
-				  "noise": args.noise,
-				  "psf": args.psf,
-				  "normalize": args.normalize}
+	gen_params = {
+		"npix": args.npix,
+		"zl": args.zl,
+		"zs": args.zs,
+		"pixel_scale": args.pixel_scale,
+		"lens_fov": args.npix * args.pixel_scale,
+		"src_fov": args.npix * args.pixel_scale / 2,
+		"lens": "SIE",
+		"shear_bool": args.shear,
+		"lens_light_bool": True if "light" in args.data_type else False,
+		"source": "SERSIC_ELLIPSE",
+		"noise": args.noise,
+		"psf": args.psf,
+		"normalize": args.normalize
+	}
 
 	if "light" in args.data_type:
 		gen_params.update({"lens_light": "SERSIC_ELLIPSE"})
-
 
 	# source plane coordinates
 	src_grid_side = np.linspace(-gen_params["src_fov"] / 2, gen_params["src_fov"] / 2, gen_params["npix"])
