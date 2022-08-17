@@ -7,8 +7,8 @@
 source $HOME/environments/astromatic/bin/activate
 
 python $ASTROMATIC_PATH/Problems/P2_lens_inference/lensing_pipeline.py\
-  --dataset_name=gravitational_lenses_20220608\
-  --data_type=lens\
+  --dataset_name=gravitational_lenses_wlenslight_20220608\
+  --data_type=lens_light\
   --size=50000\
   --rpf=5000\
   --npix=128\
